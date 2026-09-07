@@ -20,6 +20,7 @@ Item {
   readonly property string currentTitle: activePlayer ? String(activePlayer.trackTitle || "") : ""
   readonly property string currentArtist: activePlayer ? String(activePlayer.trackArtist || "") : ""
   readonly property string currentAlbum: activePlayer ? String(activePlayer.trackAlbum || "") : ""
+  readonly property string currentArtUrl: activePlayer ? String(activePlayer.trackArtUrl || "") : ""
   readonly property real currentDuration: activePlayer && activePlayer.length ? Number(activePlayer.length) : 0
   readonly property bool hasMedia: !!(activePlayer && (activePlayer.trackTitle || activePlayer.trackArtist))
 
@@ -33,6 +34,24 @@ Item {
   property string plainLyrics: ""
 
   property real livePosition: 0
+
+  // Visual line completion (presentation only) — does not modify words[] timestamps
+  // When position enters final ~15% of line, treat remaining words as completed for polished karaoke
+  readonly property bool isLineCompleting: {
+    if (lyricsMode !== "synced" || currentIndex < 0 || !lyricsLines || currentIndex >= lyricsLines.length) return false
+    var line = lyricsLines[currentIndex]
+    if (!line || !line.words || line.words.length <= 1) return false
+    var s = Number(line.time)
+    var e = Number(line.end)
+    if (!isFinite(s) || !isFinite(e) || e <= s) return false
+    var dur = e - s
+    var win = dur * 0.15
+    if (win < 0.25) win = 0.25
+    if (win > 0.75) win = 0.75
+    // If window covers most of line, keep subtle — require at least 20% of line remains normal
+    // For very short lines, the clamp already ensures window < dur for dur>0.31; otherwise handled by fallback words:[] 
+    return livePosition >= e - win
+  }
 
   // Request token for stale-response protection
   property int requestSerial: 0
@@ -510,12 +529,14 @@ Item {
         title: root.currentTitle,
         artist: root.currentArtist,
         album: root.currentAlbum,
+        artUrl: root.currentArtUrl,
         duration: root.currentDuration,
         mode: root.lyricsMode,
         status: root.status,
         lines: root.lyricsLines ? root.lyricsLines.length : 0,
         currentIndex: root.currentIndex,
         currentWordIndex: root.currentWordIndex,
+        isCompleting: root.isLineCompleting,
         position: root.livePosition,
         requestId: root.activeRequestId,
         pendingSearch: root.pendingSearch
