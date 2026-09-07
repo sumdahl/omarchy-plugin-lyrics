@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "sumiran.lyrics",
+  "name": "Lyrics",
+  "version": "0.1.0",
+  "author": "Sumiran Dahal",
+  "license": "MIT",
+  "description": "Synced lyrics for any MPRIS player via LRCLIB",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Lyrics",
+    "description": "Synced lyrics popup for current track",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "autoFetch": true
+    },
+    "schema": [
+      {
+        "key": "autoFetch",
+        "type": "boolean",
+        "label": "Auto fetch lyrics",
+        "description": "Automatically fetch lyrics when track changes.",
+        "defaultValue": true
+      }
+    ]
+  }
+}
