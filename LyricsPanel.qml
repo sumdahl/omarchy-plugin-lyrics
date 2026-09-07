@@ -17,6 +17,7 @@ Item {
   readonly property string statusMessage: lyricsService ? String(lyricsService.statusMessage || "") : ""
   readonly property var lines: lyricsService ? lyricsService.lyricsLines : []
   readonly property int currentIndex: lyricsService ? Number(lyricsService.currentIndex) : -1
+  readonly property int currentWordIndex: lyricsService ? Number(lyricsService.currentWordIndex) : -1
   readonly property string plainLyrics: lyricsService ? String(lyricsService.plainLyrics || "") : ""
 
   // Plain split for list display (keep empty lines for spacing)
@@ -236,14 +237,18 @@ Item {
         onVisibleChanged: if (visible && root.currentIndex >= 0) Qt.callLater(function() { if (!root.userScrolling) syncedList.positionViewAtIndex(root.currentIndex, ListView.Center) })
         onCountChanged: if (visible && root.currentIndex >= 0) Qt.callLater(function() { if (!root.userScrolling) syncedList.positionViewAtIndex(root.currentIndex, ListView.Center) })
 
+        // Estimated word timing derived from line-level LRC — not audio-derived.
         delegate: Item {
           required property var modelData
           required property int index
+          readonly property bool isActiveKaraoke: root.currentIndex === index && modelData.words && modelData.words.length > 1
+          readonly property var words: modelData.words || []
           width: ListView.view.width
-          implicitHeight: lineText.implicitHeight + Style.space(6)
+          implicitHeight: isActiveKaraoke ? flow.implicitHeight + Style.space(6) : lineText.implicitHeight + Style.space(6)
 
           Text {
             id: lineText
+            visible: !parent.isActiveKaraoke
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
@@ -257,11 +262,45 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
             opacity: root.currentIndex === -1 ? 1.0 : (root.currentIndex === index ? 1.0 : (Math.abs(index - root.currentIndex) === 1 ? 0.85 : 0.55))
-            scale: root.currentIndex === index ? 1.02 : 1.0
+          }
 
-            Behavior on color { ColorAnimation { duration: 180 } }
-            Behavior on opacity { NumberAnimation { duration: 180 } }
-            Behavior on scale { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+          Flow {
+            id: flow
+            visible: parent.isActiveKaraoke
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.space(6)
+            anchors.rightMargin: Style.space(6)
+            spacing: Style.space(4)
+            layoutDirection: Qt.LeftToRight
+
+            Repeater {
+              model: parent.visible ? parent.parent.words : []
+
+              delegate: Text {
+                required property var modelData
+                required property int index
+                // modelData is {text,start,end}
+                text: modelData.text
+                color: {
+                  if (index < root.currentWordIndex) return Color.accent
+                  if (index === root.currentWordIndex) return Color.accent
+                  return root.bar ? Qt.darker(root.bar.foreground, 1.4) : Color.foreground
+                }
+                font.family: root.bar ? root.bar.fontFamily : ""
+                font.pixelSize: Style.font.bodySmall
+                font.bold: index === root.currentWordIndex
+                opacity: {
+                  if (index < root.currentWordIndex) return 0.9
+                  if (index === root.currentWordIndex) return 1.0
+                  return 0.45
+                }
+
+                Behavior on color { ColorAnimation { duration: 140 } }
+                Behavior on opacity { NumberAnimation { duration: 140 } }
+              }
+            }
           }
         }
       }

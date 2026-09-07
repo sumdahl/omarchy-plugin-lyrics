@@ -46,18 +46,23 @@ Any MPRIS player via `omarchy.media` (`firstPartyServiceFor("omarchy.media")`). 
 
 ## Synced vs Plain
 
-- **Synced**: parsed `LrcParser` (`[00:12.34]`, `[01:02]`, `[00:10][00:12]text`, `[ar:` ignored), sorted, binary search `findCurrentIndex`. `positionTimer 1000ms` when `synced&&playing`, source is `MPRIS position`.
+- **Synced**: parsed `LrcParser` (`[00:12.34]`, `[01:02]`, `[00:10][00:12]text`, `[ar:` ignored), sorted, binary search `findCurrentIndex`. `positionTimer 1000ms` when `synced&&playing`, source is `MPRIS position`. Each line enriched with estimated word timings via `WordTimingEstimator` (see below).
 - **Plain**: `plainLyrics.split("\n")` displayed as readable list, no highlight.
+
+## Estimated Word Karaoke
+
+Word timing is **estimated from line-level LRC timestamps, not audio-derived** and may differ from actual vocal timing. `WordTimingEstimator` tokenizes robustly (preserves `can't`/`well-known`, handles Unicode, filters punctuation-only), weights by `normalized length` (function words `*0.75`, long `*1.1`, tiny punctuation `*1.04/1.06`), conserves `[lineStart, lineEnd]` (next line time; final line `words:[]`), validates `start<end` ordered inside line, falls back to line highlight when infeasible (single word, `duration<0.6` with dense words, missing `lineEnd`). `Service` exposes `currentWordIndex` via `Estimator.findCurrentWordIndex` (binary) derived from `livePosition`; `LyricsPanel` highlights completed/current/future words in active line (`Flow` of word `Text`, accent `1.0` current, `0.9` completed, `0.45` future, no scale to avoid reflow). No new timer, no audio analysis.
 
 ## Files
 
 ```
-manifest.json       service+bar-widget, keepLoaded, defaults {autoFetch:true}
-Service.qml         sole source of truth: lyricsLines/mode/currentIndex/status, stale-token, duration 0→real retry, position sync
-Panel.qml           BarWidget + KeyboardPanel, passes lyricsService
-LyricsPanel.qml     presentation only (ListView karaoke / plain)
-LyricsProvider.js   LRCLIB + cache + normalize (pragma library)
-LrcParser.js        pure LRC parser (pragma library)
+manifest.json            service+bar-widget, keepLoaded, defaults {autoFetch:true}
+Service.qml              sole source of truth: lyricsLines/mode/currentIndex/currentWordIndex/status, stale-token, duration 0→real retry, position sync
+Panel.qml                BarWidget + KeyboardPanel, passes lyricsService
+LyricsPanel.qml          presentation only (Flow karaoke for active line, ListView line centering)
+LyricsProvider.js        LRCLIB + cache + normalize (pragma library)
+LrcParser.js             pure LRC parser (pragma library)
+WordTimingEstimator.js   pure word estimation + findCurrentWordIndex (pragma library)
 ```
 
 ## Known Limitations

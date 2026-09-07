@@ -4,6 +4,7 @@ import Quickshell.Io
 
 import "LyricsProvider.js" as Provider
 import "LrcParser.js" as Parser
+import "WordTimingEstimator.js" as Estimator
 
 // sumiran.lyrics service — owns lyrics state, observes omarchy.media
 Item {
@@ -23,9 +24,10 @@ Item {
   readonly property bool hasMedia: !!(activePlayer && (activePlayer.trackTitle || activePlayer.trackArtist))
 
   // Lyrics state
-  property var lyricsLines: []
+  property var lyricsLines: [] // [{time,text,words:[{text,start,end}], end}]
   property string lyricsMode: "none"   // "synced" | "plain" | "notfound" | "none"
   property int currentIndex: -1
+  property int currentWordIndex: -1
   property string status: "idle"       // "idle" | "loading" | "ready" | "error" | "offline" | "notfound"
   property string statusMessage: ""
   property string plainLyrics: ""
@@ -98,6 +100,7 @@ Item {
     lyricsLines = []
     lyricsMode = "none"
     currentIndex = -1
+    currentWordIndex = -1
     status = "idle"
     statusMessage = ""
     plainLyrics = ""
@@ -107,6 +110,7 @@ Item {
     lyricsLines = []
     lyricsMode = "none"
     currentIndex = -1
+    currentWordIndex = -1
     status = "loading"
     statusMessage = "Fetching lyrics..."
     plainLyrics = ""
@@ -229,6 +233,7 @@ Item {
       status = "notfound"
       statusMessage = "No lyrics found"
       currentIndex = -1
+      currentWordIndex = -1
       // Cache notfound as well to avoid repeat lookups
       writeCache(sig, result || { mode: "notfound", syncedLyrics: "", plainLyrics: "", source: "lrclib" })
       return
@@ -244,6 +249,7 @@ Item {
           status = "ready"
           statusMessage = ""
           currentIndex = -1
+          currentWordIndex = -1
           writeCache(sig, result)
           return
         }
@@ -253,8 +259,18 @@ Item {
         status = "notfound"
         statusMessage = "No lyrics found"
         currentIndex = -1
+        currentWordIndex = -1
         writeCache(sig, { mode: "notfound", syncedLyrics: "", plainLyrics: "", source: "lrclib" })
         return
+      }
+      // Enrich with estimated word timings (fallback to [] when infeasible)
+      // Word timing is estimated from line timestamps, not audio-derived.
+      for (var i = 0; i < lines.length; i++) {
+        var s = Number(lines[i].time)
+        var e = (i + 1 < lines.length) ? Number(lines[i + 1].time) : NaN
+        var ws = Estimator.estimateWords(lines[i].text, s, e)
+        lines[i].words = ws
+        lines[i].end = e
       }
       lyricsLines = lines
       plainLyrics = Provider.isUsablePlain(result.plainLyrics) ? String(result.plainLyrics) : ""
@@ -272,6 +288,7 @@ Item {
       status = "ready"
       statusMessage = ""
       currentIndex = -1
+      currentWordIndex = -1
       writeCache(sig, result)
       return
     }
@@ -282,6 +299,7 @@ Item {
     status = "notfound"
     statusMessage = "No lyrics found"
     currentIndex = -1
+    currentWordIndex = -1
   }
 
   function applyError(reqId, sig, message, isOffline) {
@@ -294,6 +312,7 @@ Item {
     status = isOffline ? "offline" : "error"
     statusMessage = message || (isOffline ? "Offline" : "Failed to fetch lyrics")
     currentIndex = -1
+    currentWordIndex = -1
   }
 
   function writeCache(sig, result) {
@@ -333,10 +352,17 @@ Item {
   function updateCurrentIndex() {
     if (lyricsMode !== "synced" || !lyricsLines || lyricsLines.length === 0) {
       if (currentIndex !== -1) currentIndex = -1
+      if (currentWordIndex !== -1) currentWordIndex = -1
       return
     }
     var idx = Parser.findCurrentIndex(lyricsLines, livePosition)
     if (idx !== currentIndex) currentIndex = idx
+    // Word karaoke: estimated timing derived from line timestamps, not audio.
+    var words = []
+    if (idx >= 0 && idx < lyricsLines.length && lyricsLines[idx] && lyricsLines[idx].words) words = lyricsLines[idx].words
+    var wIdx = Estimator.findCurrentWordIndex(words, livePosition)
+    // console.log("updateCurrentIndex pos", livePosition, "idx", idx, "words", words.length, "wIdx", wIdx, "line", idx>=0?lyricsLines[idx].text:"")
+    if (wIdx !== currentWordIndex) currentWordIndex = wIdx
   }
 
   onLivePositionChanged: {
@@ -489,6 +515,7 @@ Item {
         status: root.status,
         lines: root.lyricsLines ? root.lyricsLines.length : 0,
         currentIndex: root.currentIndex,
+        currentWordIndex: root.currentWordIndex,
         position: root.livePosition,
         requestId: root.activeRequestId,
         pendingSearch: root.pendingSearch
