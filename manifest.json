@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "sumiran.lyrics",
   "name": "Lyrics",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "Sumiran Dahal",
   "license": "MIT",
   "description": "Synced lyrics for any MPRIS player via LRCLIB",

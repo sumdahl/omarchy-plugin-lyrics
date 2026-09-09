@@ -14,15 +14,117 @@ Item {
 
   readonly property string home: Quickshell.env("HOME")
 
-  readonly property var mediaService: shell ? shell.firstPartyServiceFor("omarchy.media") : null
-  readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
+  // --- Media input -------------------------------------------------------
+  //
+  // Track metadata reaches this service by whichever of three routes the
+  // running Omarchy still permits, most-direct first. Each degrades to the
+  // next on its own, so a host that tightens (or loosens) what a plugin
+  // service may touch changes which route carries the data, not whether
+  // lyrics work.
+  //
+  //   "service"   omarchy.media read straight off our own scoped shell.
+  //               Omarchy <= 4.0.2 handed every plugin service the real
+  //               shell; 4.0.3 grants this only to plugins declaring kind
+  //               "bar" (shell.qml pluginHasBarCapabilities).
+  //   "widget"    pushed in by our bar widget, which reaches omarchy.media
+  //               through bar.shell even when this service cannot.
+  //   "playerctl" polled off MPRIS directly. Touches no host API at all, so
+  //               it outlives any future change to the plugin sandbox.
+  readonly property var mediaService: {
+    if (!shell || typeof shell.firstPartyServiceFor !== "function") return null
+    try {
+      return shell.firstPartyServiceFor("omarchy.media") || null
+    } catch (e) {
+      return null
+    }
+  }
+  readonly property var activePlayer: mediaService ? (mediaService.activePlayer || null) : null
 
-  readonly property string currentTitle: activePlayer ? String(activePlayer.trackTitle || "") : ""
-  readonly property string currentArtist: activePlayer ? String(activePlayer.trackArtist || "") : ""
-  readonly property string currentAlbum: activePlayer ? String(activePlayer.trackAlbum || "") : ""
-  readonly property string currentArtUrl: activePlayer ? String(activePlayer.trackArtUrl || "") : ""
-  readonly property real currentDuration: activePlayer && activePlayer.length ? Number(activePlayer.length) : 0
-  readonly property bool hasMedia: !!(activePlayer && (activePlayer.trackTitle || activePlayer.trackArtist))
+  // Set by pushMedia()/pushPosition() from Panel.qml, and by the playerctl
+  // poller. Null means "this route has nothing", which is what makes the
+  // fallback chain below collapse cleanly.
+  property var widgetMedia: null
+  property var polledMedia: null
+
+  readonly property string mediaRoute: activePlayer ? "service"
+    : (widgetMedia ? "widget" : (polledMedia ? "playerctl" : "none"))
+
+  // Position is deliberately excluded: it ticks, and re-evaluating the whole
+  // snapshot on every tick would churn every binding that depends on it.
+  readonly property var mediaTrack: {
+    if (activePlayer) return {
+      title: String(activePlayer.trackTitle || ""),
+      artist: String(activePlayer.trackArtist || ""),
+      album: String(activePlayer.trackAlbum || ""),
+      artUrl: String(activePlayer.trackArtUrl || ""),
+      duration: activePlayer.length ? Number(activePlayer.length) : 0,
+      isPlaying: !!activePlayer.isPlaying,
+      positionSupported: !!activePlayer.positionSupported
+    }
+    if (widgetMedia) return widgetMedia
+    if (polledMedia) return polledMedia
+    return null
+  }
+
+  readonly property string currentTitle: mediaTrack ? String(mediaTrack.title || "") : ""
+  readonly property string currentArtist: mediaTrack ? String(mediaTrack.artist || "") : ""
+  readonly property string currentAlbum: mediaTrack ? String(mediaTrack.album || "") : ""
+  readonly property string currentArtUrl: mediaTrack ? String(mediaTrack.artUrl || "") : ""
+  readonly property real currentDuration: mediaTrack ? (Number(mediaTrack.duration) || 0) : 0
+  readonly property bool hasMedia: !!(mediaTrack && (mediaTrack.title || mediaTrack.artist))
+  readonly property bool isPlaying: !!(mediaTrack && mediaTrack.isPlaying)
+  readonly property bool positionSupported: activePlayer
+    ? !!activePlayer.positionSupported
+    : !!(mediaTrack && mediaTrack.positionSupported)
+
+  // Only the routes that cannot push on their own need polling.
+  readonly property bool needsPlayerctl: !activePlayer && !widgetMedia
+
+  // Called by our bar widget. Passing null retracts the route, so the service
+  // falls through to playerctl rather than holding a stale track.
+  function pushMedia(data) {
+    if (!data || !(data.title || data.artist)) {
+      widgetMedia = null
+      return
+    }
+    widgetMedia = {
+      title: String(data.title || ""),
+      artist: String(data.artist || ""),
+      album: String(data.album || ""),
+      artUrl: String(data.artUrl || ""),
+      duration: Number(data.duration) || 0,
+      isPlaying: !!data.isPlaying,
+      positionSupported: data.positionSupported !== false,
+      position: Number(data.position) || 0,
+      positionAt: Number(data.positionAt) || Date.now()
+    }
+  }
+
+  function pushPosition(position, isPlaying) {
+    if (!widgetMedia) return
+    var next = {}
+    for (var k in widgetMedia) next[k] = widgetMedia[k]
+    next.position = Number(position) || 0
+    next.positionAt = Date.now()
+    next.isPlaying = !!isPlaying
+    widgetMedia = next
+    syncPosition()
+  }
+
+  // Position for the routes that carry it as a sampled value, advanced by the
+  // wall clock since the sample so word timing stays smooth between polls.
+  function sampledPosition(src) {
+    if (!src) return 0
+    var base = Number(src.position) || 0
+    var at = Number(src.positionAt) || 0
+    if (src.isPlaying && at > 0) base += (Date.now() - at) / 1000
+    return base < 0 ? 0 : base
+  }
+
+  function currentPosition() {
+    if (activePlayer) return Number(activePlayer.position) || 0
+    return sampledPosition(widgetMedia || polledMedia)
+  }
 
   // Lyrics state
   property var lyricsLines: [] // [{time,text,words:[{text,start,end}], end}]
@@ -360,11 +462,11 @@ Item {
 
   // --- Position sync ---
   function syncPosition() {
-    if (!activePlayer || !activePlayer.positionSupported) {
+    if (!hasMedia || !positionSupported) {
       livePosition = 0
       return
     }
-    livePosition = Number(activePlayer.position) || 0
+    livePosition = currentPosition()
     if (lyricsMode === "synced") updateCurrentIndex()
   }
 
@@ -392,21 +494,23 @@ Item {
 
   Timer {
     id: positionTimer
-    interval: 1000
     repeat: true
-    running: root.hasMedia && !!root.activePlayer && !!root.activePlayer.isPlaying && root.lyricsMode === "synced"
+    // A sampled route needs finer ticks than a live one to keep word timing
+    // smooth between samples.
+    interval: root.activePlayer ? 1000 : 250
+    running: root.hasMedia && root.isPlaying && root.lyricsMode === "synced"
     triggeredOnStart: true
     onTriggered: root.syncPosition()
   }
 
   // Also sync immediately on play/pause/seek-visible changes
   Connections {
-    target: activePlayer
+    target: root.activePlayer
     enabled: !!root.activePlayer
     function onIsPlayingChanged() { if (root.lyricsMode === "synced") root.syncPosition() }
   }
 
-  onActivePlayerChanged: {
+  onMediaTrackChanged: {
     syncPosition()
     // checkTrackSignal handles lifecycle; also ensure position sync after switch
     if (hasMedia) {
@@ -520,6 +624,69 @@ Item {
 
   Process { id: cacheWriteProc }
 
+  // --- playerctl route ---------------------------------------------------
+  //
+  // Last-resort media source: straight MPRIS, no host API. Runs only while no
+  // better route is supplying data, so on a host where omarchy.media is
+  // reachable this never spawns anything.
+  readonly property string fieldSeparator: String.fromCharCode(31)
+
+  readonly property string playerctlScript: [
+    "sep=$(printf '\\037')",
+    // Prefer a player that is actually playing; fall back to the first one.
+    "name=$(playerctl -l 2>/dev/null | while read -r n; do",
+    "  [ \"$(playerctl -p \"$n\" status 2>/dev/null)\" = \"Playing\" ] && { printf '%s' \"$n\"; break; }",
+    "done)",
+    "[ -n \"$name\" ] || name=$(playerctl -l 2>/dev/null | head -n1)",
+    "[ -n \"$name\" ] || exit 2",
+    "m=$(playerctl -p \"$name\" metadata --format \"{{status}}${sep}{{mpris:length}}${sep}{{xesam:title}}${sep}{{xesam:artist}}${sep}{{xesam:album}}${sep}{{mpris:artUrl}}\" 2>/dev/null) || exit 2",
+    "[ -n \"$m\" ] || exit 2",
+    "p=$(playerctl -p \"$name\" position 2>/dev/null) || p=0",
+    "printf '%s%s%s' \"$m\" \"$sep\" \"$p\""
+  ].join("\n")
+
+  function parsePlayerctl(text) {
+    var parts = String(text || "").split(root.fieldSeparator)
+    if (parts.length < 7) return null
+    var title = String(parts[2] || "").trim()
+    var artist = String(parts[3] || "").trim()
+    if (!title && !artist) return null
+    // mpris:length is microseconds; the rest of this service works in seconds.
+    var lengthUs = Number(parts[1])
+    return {
+      title: title,
+      artist: artist,
+      album: String(parts[4] || "").trim(),
+      artUrl: String(parts[5] || "").trim(),
+      duration: isFinite(lengthUs) && lengthUs > 0 ? lengthUs / 1000000 : 0,
+      isPlaying: String(parts[0] || "").trim() === "Playing",
+      positionSupported: true,
+      position: Number(parts[6]) || 0,
+      positionAt: Date.now()
+    }
+  }
+
+  Timer {
+    id: playerctlTimer
+    // Sampling only has to be fine-grained while synced lyrics are scrolling.
+    interval: root.lyricsMode === "synced" && root.isPlaying ? 1000 : 3000
+    repeat: true
+    running: root.needsPlayerctl
+    triggeredOnStart: true
+    onTriggered: if (!playerctlProc.running) playerctlProc.running = true
+  }
+
+  Process {
+    id: playerctlProc
+    command: ["bash", "-c", root.playerctlScript]
+    stdout: StdioCollector { id: playerctlOut; waitForEnd: true }
+    onExited: function(code) {
+      if (!root.needsPlayerctl) return
+      root.polledMedia = code === 0 ? root.parsePlayerctl(String(playerctlOut.text || "")) : null
+      root.syncPosition()
+    }
+  }
+
   IpcHandler {
     target: "sumiran.lyrics-service"
 
@@ -531,6 +698,8 @@ Item {
         album: root.currentAlbum,
         artUrl: root.currentArtUrl,
         duration: root.currentDuration,
+        route: root.mediaRoute,
+        isPlaying: root.isPlaying,
         mode: root.lyricsMode,
         status: root.status,
         lines: root.lyricsLines ? root.lyricsLines.length : 0,

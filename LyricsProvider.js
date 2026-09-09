@@ -35,6 +35,50 @@ function normalizedLower(value) {
   return normalizeField(value).toLowerCase()
 }
 
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+// A browser reports the uploading channel as the artist, so what arrives is
+// "Cigarettes After Sex - Topic" rather than "Cigarettes After Sex". LRCLIB
+// matches on the real name and returns nothing for the channel form.
+function cleanArtist(value) {
+  var a = normalizeField(value)
+  a = a.replace(/\s*[-\u2013\u2014]\s*Topic\s*$/i, "")
+  a = a.replace(/\s*VEVO\s*$/i, "")
+  a = a.replace(/\s*[-\u2013\u2014]\s*Official(\s+Channel)?\s*$/i, "")
+  return collapseWhitespace(a)
+}
+
+// A browser also hands over the whole video title. Drop the decoration a music
+// service would never have attached, and the "Artist - " the title repeats.
+function cleanTitle(value, artist) {
+  var t = collapseWhitespace(value)
+  t = t.replace(/\s*[\(\[][^\)\]]*\b(Official|Lyric|Lyrics|Visualizer|Audio|Video|MV|HD|HQ|4K)\b[^\)\]]*[\)\]]/gi, " ")
+  t = t.replace(/\s*\|[^|]*$/, "")
+  t = collapseWhitespace(t)
+  var a = cleanArtist(artist)
+  if (a) t = t.replace(new RegExp("^" + escapeRegExp(a) + "\\s*[-\u2013\u2014:]\\s*", "i"), "")
+  return stripSuffixes(collapseWhitespace(t))
+}
+
+// The single place that turns whatever the player reported into the fields
+// LRCLIB is asked about, so the request, the search fallback, the candidate
+// scoring and the cache key all agree on what the track is called.
+function resolveFields(title, artist, album) {
+  var a = cleanArtist(artist)
+  var t = cleanTitle(title, artist)
+  // With no artist at all the title is usually "Artist - Title".
+  if (!a) {
+    var split = t.match(/^(.{1,80}?)\s+[-\u2013\u2014]\s+(.+)$/)
+    if (split) {
+      a = collapseWhitespace(split[1])
+      t = collapseWhitespace(split[2])
+    }
+  }
+  return { title: t, artist: a, album: normalizeField(album) }
+}
+
 // Deterministic hash for cache filenames (djb2 -> hex)
 function hashString(str) {
   var s = String(str || "")
@@ -48,9 +92,10 @@ function hashString(str) {
 }
 
 function buildCacheKey(title, artist, album, duration) {
-  var t = normalizedLower(title)
-  var a = normalizedLower(artist)
-  var al = normalizedLower(album)
+  var f = resolveFields(title, artist, album)
+  var t = String(f.title || "").toLowerCase()
+  var a = String(f.artist || "").toLowerCase()
+  var al = String(f.album || "").toLowerCase()
   var d = String(Math.round(Number(duration) || 0))
   return a + "|" + t + "|" + al + "|" + d
 }
@@ -76,9 +121,10 @@ function buildGetUrl(title, artist, album, duration) {
 }
 
 function buildSearchUrl(title, artist, album) {
-  var t = normalizeField(title)
-  var a = normalizeField(artist)
-  var al = normalizeField(album)
+  var f = resolveFields(title, artist, album)
+  var t = f.title
+  var a = f.artist
+  var al = f.album
   // LRCLIB search uses q=...; include artist+title for better match
   var q = ""
   if (a && t) q = a + " " + t
@@ -93,10 +139,11 @@ function buildSearchUrl(title, artist, album) {
 }
 
 function normalizeForRequest(title, artist, album, duration) {
+  var f = resolveFields(title, artist, album)
   return {
-    title: normalizeField(title),
-    artist: normalizeField(artist),
-    album: normalizeField(album),
+    title: f.title,
+    artist: f.artist,
+    album: f.album,
     duration: Number(duration) || 0
   }
 }
@@ -161,9 +208,10 @@ function scoreCandidate(candidate, normTitle, normArtist, normAlbum, duration) {
 
 function pickBestSearchCandidate(candidates, title, artist, album, duration) {
   if (!candidates || !Array.isArray(candidates) || candidates.length === 0) return null
-  var nTitle = normalizeField(title)
-  var nArtist = normalizeField(artist)
-  var nAlbum = normalizeField(album)
+  var picked = resolveFields(title, artist, album)
+  var nTitle = picked.title
+  var nArtist = picked.artist
+  var nAlbum = picked.album
   var nDur = Number(duration) || 0
   var best = null
   var bestScore = -1

@@ -18,6 +18,49 @@ Panel {
   readonly property string title: activePlayer ? String(activePlayer.trackTitle || "") : ""
   readonly property string artist: activePlayer ? String(activePlayer.trackArtist || "") : ""
 
+  // The service prefers to read omarchy.media itself, but a plugin service is
+  // not always granted it (Omarchy 4.0.3 restricts that to plugins declaring
+  // kind "bar"). A bar widget still reaches it through bar.shell, so mirror it
+  // in from here. Pushing null when there is no player retracts the route and
+  // lets the service fall through to its own MPRIS polling rather than sitting
+  // on a stale track.
+  readonly property var mediaSnapshot: {
+    if (!activePlayer) return null
+    return {
+      title: String(activePlayer.trackTitle || ""),
+      artist: String(activePlayer.trackArtist || ""),
+      album: String(activePlayer.trackAlbum || ""),
+      artUrl: String(activePlayer.trackArtUrl || ""),
+      duration: activePlayer.length ? Number(activePlayer.length) : 0,
+      isPlaying: !!activePlayer.isPlaying,
+      positionSupported: !!activePlayer.positionSupported
+    }
+  }
+
+  function publishMedia() {
+    if (!lyricsService || typeof lyricsService.pushMedia !== "function") return
+    lyricsService.pushMedia(mediaSnapshot)
+  }
+
+  onMediaSnapshotChanged: publishMedia()
+  onLyricsServiceChanged: publishMedia()
+  Component.onCompleted: publishMedia()
+
+  // Position is sampled rather than bound, so a ticking clock does not
+  // re-evaluate the snapshot above on every frame.
+  Timer {
+    interval: 1000
+    repeat: true
+    running: !!root.lyricsService && !!root.activePlayer && !!root.activePlayer.isPlaying
+    triggeredOnStart: true
+    onTriggered: {
+      if (!root.lyricsService || typeof root.lyricsService.pushPosition !== "function") return
+      if (!root.activePlayer) return
+      root.lyricsService.pushPosition(Number(root.activePlayer.position) || 0,
+                                      !!root.activePlayer.isPlaying)
+    }
+  }
+
   visible: true
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight

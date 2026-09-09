@@ -2,7 +2,7 @@
 
 Standalone Omarchy bar-widget + service. Shows synced (karaoke) or plain lyrics for **any MPRIS player** via [LRCLIB](https://lrclib.net).
 
-**ID:** `sumiran.lyrics` · `keepLoaded:true` · `bar-widget` `󰎆` → `KeyboardPanel` popup. No daemon, no extra deps.
+**ID:** `sumiran.lyrics` · `keepLoaded:true` · `bar-widget` `󰎆` → `KeyboardPanel` popup. No daemon. Needs the `playerctl` package when the host does not hand this plugin its media service (see Supported Players).
 
 ## Location
 
@@ -26,11 +26,21 @@ Reload: `omarchy restart shell` · Remove: delete both entries → restart.
   - Synced: karaoke `ListView` centered highlight (accent, bold, scale 1.02), auto-scroll with 3s manual cooldown.
   - Plain: scrollable text, no fake sync.
   - States: `Play a track…` (idle), `Loading…`, `Lyrics not found`, `Unable to fetch…` (offline/error).
-- **IPC**: `omarchy-shell sumiran.lyrics-service status` → `{hasMedia,title,artist,album,duration,mode,status,lines,currentIndex,position}`. Also `refetch`/`clear`.
+- **IPC**: `omarchy-shell sumiran.lyrics-service status` → `{hasMedia,title,artist,album,duration,route,isPlaying,mode,status,lines,currentIndex,currentWordIndex,position}`. Also `refetch`/`clear`.
 
 ## Supported Players
 
-Any MPRIS player via `omarchy.media` (`firstPartyServiceFor("omarchy.media")`). Tested: Spotify, Brave (YouTube), mpv. Not Spotify-only.
+Any MPRIS player. Tested: Spotify, Brave (YouTube), mpv. Not Spotify-only.
+
+Track metadata arrives by whichever of three routes the running Omarchy allows, most direct first. `mediaRoute` in the IPC status reports the live one.
+
+1. **`service`** — `firstPartyServiceFor("omarchy.media")` straight off this plugin's shell. Omarchy 4.0.2 and earlier handed every plugin service the real shell; from 4.0.3 this is granted only to plugins declaring kind `bar`, so a bar-widget no longer gets it.
+2. **`widget`** — mirrored in from the bar widget, which on some hosts reaches `omarchy.media` when the service cannot.
+3. **`playerctl`** — read from MPRIS directly, touching no host API, so it keeps working across changes to the plugin sandbox. This is the route in use on Omarchy 4.0.3. It needs the `playerctl` package, available from the Arch repositories.
+
+Each route falls through to the next on its own, and a more direct one takes over again as soon as it becomes available.
+
+Metadata from a browser is cleaned before lookup: LRCLIB matches on real artist names, not channel names, so `resolveFields()` strips `- Topic` and `VEVO` suffixes, bracketed `(Official Video)`-style decoration, a trailing `| Channel`, and an `Artist - ` prefix the title repeats. It also splits `Artist - Title` when the artist field is empty.
 
 ## Provider
 
