@@ -14,9 +14,12 @@ Panel {
   readonly property var mediaService: bar && bar.shell ? bar.shell.firstPartyServiceFor("omarchy.media") : null
   readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
 
-  readonly property bool hasMedia: !!(activePlayer && (activePlayer.trackTitle || activePlayer.trackArtist))
-  readonly property string title: activePlayer ? String(activePlayer.trackTitle || "") : ""
-  readonly property string artist: activePlayer ? String(activePlayer.trackArtist || "") : ""
+  // Read track identity from the lyrics service: it falls back to its own MPRIS
+  // polling when omarchy.media is withheld, so it knows the track even when
+  // activePlayer here is null.
+  readonly property bool hasMedia: lyricsService ? !!lyricsService.hasMedia : false
+  readonly property string title: lyricsService ? String(lyricsService.currentTitle || "") : ""
+  readonly property string artist: lyricsService ? String(lyricsService.currentArtist || "") : ""
 
   // The service prefers to read omarchy.media itself, but a plugin service is
   // not always granted it (Omarchy 4.0.3 restricts that to plugins declaring
@@ -69,8 +72,8 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    // Lyrics glyph — distinct from media panel
-    text: "󰎆"
+    // Karaoke mic — distinct from the music-note media widgets
+    text: "󰍰"
     active: root.opened
     opacity: root.hasMedia ? 1.0 : 0.45
     tooltipText: root.hasMedia ? (root.artist !== "" ? root.title + " — " + root.artist : root.title) : "Lyrics — no track"

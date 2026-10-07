@@ -4,20 +4,34 @@ Standalone Omarchy bar-widget + service. Shows synced (karaoke) or plain lyrics 
 
 **ID:** `sumiran.lyrics` · `keepLoaded:true` · `bar-widget` `󰎆` → `KeyboardPanel` popup. No daemon. Needs the `playerctl` package when the host does not hand this plugin its media service (see Supported Players).
 
-## Location
+## Install
 
-```
-~/.config/omarchy/plugins/sumiran.lyrics/
+```bash
+sudo pacman -S playerctl   # needed on Omarchy 4.0.3+ (see Supported Players)
+omarchy plugin add https://github.com/sumdahl/omarchy-plugin-lyrics.git --enable
+omarchy restart shell
 ```
 
-Registered in `~/.config/omarchy/shell.json`:
+This clones into `~/.config/omarchy/plugins/sumiran.lyrics/` and adds the widget to the bar. Added without `--enable`? Place it yourself:
+
+```bash
+omarchy plugin enable sumiran.lyrics --section right
+```
+
+Update: `omarchy plugin update sumiran.lyrics` · Disable: `omarchy plugin disable sumiran.lyrics` · Remove: `omarchy plugin remove sumiran.lyrics`.
+
+### Manual
+
+```bash
+git clone https://github.com/sumdahl/omarchy-plugin-lyrics.git ~/.config/omarchy/plugins/sumiran.lyrics
+```
+
+Register it in `~/.config/omarchy/shell.json`, then `omarchy restart shell`:
 
 ```json
 { "plugins": [{ "id": "sumiran.lyrics" }],
   "bar": { "layout": { "right": [{ "id": "sumiran.lyrics" }, …] } } }
 ```
-
-Reload: `omarchy restart shell` · Remove: delete both entries → restart.
 
 ## Usage
 

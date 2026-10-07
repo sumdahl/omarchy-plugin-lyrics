@@ -286,28 +286,32 @@ Item {
         spacing: Style.space(6)
         boundsBehavior: Flickable.StopAtBounds
 
-        // Keep current line centered (Spotify-like)
-        preferredHighlightBegin: height / 2 - Style.space(18)
-        preferredHighlightEnd: height / 2 + Style.space(18)
-        highlightRangeMode: ListView.ApplyRange
-        highlightMoveDuration: 300
-        highlightMoveVelocity: 900
-        highlightFollowsCurrentItem: true
-
         currentIndex: root.currentIndex >= 0 && root.currentIndex < count ? root.currentIndex : -1
 
-        onMovementStarted: { root.userScrolling = true; userScrollCooldown.restart() }
-        onFlickStarted: { root.userScrolling = true; userScrollCooldown.restart() }
+        // Centre of the current line, clamped to the scrollable range. Bound, so
+        // it tracks the line heights while their font-size animation runs.
+        readonly property real targetY: {
+          if (!currentItem) return originY
+          var y = currentItem.y + currentItem.height / 2 - height / 2
+          return Math.max(originY, Math.min(y, originY + contentHeight - height))
+        }
+
+        SmoothedAnimation {
+          id: scrollAnim
+          target: syncedList
+          property: "contentY"
+          to: syncedList.targetY
+          velocity: -1
+          duration: 450
+        }
+
+        onMovementStarted: { scrollAnim.stop(); root.userScrolling = true; userScrollCooldown.restart() }
+        onFlickStarted: { scrollAnim.stop(); root.userScrolling = true; userScrollCooldown.restart() }
 
         Connections {
           target: root
           function onCurrentIndexChanged() {
-            if (syncedList.visible && root.mode === "synced" && root.currentIndex >= 0) {
-              if (root.userScrolling) return
-              Qt.callLater(function() {
-                if (!root.userScrolling && syncedList.visible) syncedList.positionViewAtIndex(root.currentIndex, ListView.Center)
-              })
-            }
+            if (syncedList.visible && root.currentIndex >= 0 && !root.userScrolling) scrollAnim.restart()
           }
         }
 
@@ -344,6 +348,10 @@ Item {
               if (root.currentIndex === index) return 1.0
               return 0.52
             }
+
+            Behavior on color { ColorAnimation { duration: 300; easing.type: Easing.OutCubic } }
+            Behavior on opacity { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+            Behavior on font.pixelSize { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
           }
         }
       }
